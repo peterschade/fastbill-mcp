@@ -27,6 +27,10 @@ export class FastbillClient {
       "Basic " + Buffer.from(`${email}:${apiKey}`).toString("base64");
   }
 
+  getAuthHeader(): string {
+    return this.authHeader;
+  }
+
   async request(payload: FastbillRequest): Promise<FastbillResponse> {
     const response = await fetch(FASTBILL_API_URL, {
       method: "POST",

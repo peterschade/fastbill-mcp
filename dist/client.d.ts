@@ -17,6 +17,7 @@ export interface FastbillResponse {
 export declare class FastbillClient {
     private authHeader;
     constructor(email: string, apiKey: string);
+    getAuthHeader(): string;
     request(payload: FastbillRequest): Promise<FastbillResponse>;
 }
 export declare function getClient(): FastbillClient;

@@ -110,7 +110,7 @@ Nach der Installation kann Claude direkt mit deinem Fastbill-Konto arbeiten:
 | Bereich | Was Claude damit tun kann |
 |---------|--------------------------|
 | **Kunden** | Anlegen, suchen, bearbeiten, löschen |
-| **Rechnungen** | Erstellen mit allen Positionen, versenden per E-Mail/Post, als bezahlt markieren, stornieren |
+| **Rechnungen** | Erstellen mit allen Positionen, versenden per E-Mail/Post, als bezahlt markieren, stornieren, PDF lokal speichern |
 | **Angebote** | Erstellen, per E-Mail versenden, direkt in Rechnung umwandeln |
 | **Artikel** | Produkte/Dienstleistungen als Stammdaten pflegen |
 | **Wiederkehrende Rechnungen** | Automatische Rechnungen einrichten (wöchentlich bis 2-jährlich) |
@@ -129,6 +129,7 @@ Nach der Installation kann Claude direkt mit deinem Fastbill-Konto arbeiten:
 - *"Lege einen neuen Kunden an: Firma Müller GmbH, München"*
 - *"Erstelle ein Angebot für Website-Redesign und schick es per E-Mail"*
 - *"Welche Rechnungen sind diesen Monat fällig?"*
+- *"Lade die PDF von Rechnung 2024-001 herunter"* (Tool `invoice_download_pdf`, speichert standardmäßig im System-Temp-Ordner unter `fastbill-pdf`; eigener Ordner per Umgebungsvariable `FASTBILL_PDF_DIR` in der Claude-Konfiguration)
 
 ---
 

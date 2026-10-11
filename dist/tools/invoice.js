@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { getClient, cleanData, todayISO, progressiveSearch } from "../client.js";
 import { formatInvoices, sortByDateDesc } from "../formatters.js";
 const InvoiceItemSchema = z.object({
@@ -22,6 +25,12 @@ function mapItems(items) {
         IS_GROSS: item.is_gross,
         SORT_ORDER: item.sort_order,
     }));
+}
+const DEFAULT_PDF_DIR = process.env.FASTBILL_PDF_DIR || join(tmpdir(), "fastbill-pdf");
+function safeFilename(name) {
+    const cleaned = name.replace(/[\/\\:*?"<>|\x00-\x1f]/g, "_").replace(/^\.+/, "").trim();
+    const base = cleaned || "rechnung";
+    return base.toLowerCase().endsWith(".pdf") ? base : `${base}.pdf`;
 }
 export function registerInvoiceTools(server) {
     server.tool("invoice_get", "Get invoices from Fastbill, sorted by date (newest first). IMPORTANT: Always set start_date and end_date! Without date filters the API returns random invoices from all time. For 'latest invoices' use the current month or last 3 months as range. For 'all invoices' use a full year range. Max 100 per request — use offset for pagination.", {
@@ -241,6 +250,59 @@ export function registerInvoiceTools(server) {
             DATA: cleanData({ INVOICE_ID: params.invoice_id, PAID_DATE: params.paid_date, PAYMENT_METHOD: params.payment_method }),
         });
         return { content: [{ type: "text", text: JSON.stringify(result.RESPONSE, null, 2) }] };
+    });
+    server.tool("invoice_download_pdf", "Download the PDF of an invoice from Fastbill and save it locally (default: FASTBILL_PDF_DIR, otherwise <system temp>/fastbill-pdf). Identify the invoice by invoice_id or invoice_number. Returns the local file path, e.g. for attaching it to an email. Drafts have no PDF until completed.", {
+        invoice_id: z.string().optional().describe("Invoice ID (either this or invoice_number)"),
+        invoice_number: z.string().optional().describe("Invoice number (either this or invoice_id)"),
+        filename: z.string().optional().describe("Target file name (default: Rechnung_<number>.pdf)"),
+        target_dir: z.string().optional().describe("Target directory (default: FASTBILL_PDF_DIR, otherwise <system temp>/fastbill-pdf)"),
+    }, async (params) => {
+        if (!params.invoice_id && !params.invoice_number) {
+            throw new Error("invoice_id or invoice_number is required");
+        }
+        const client = getClient();
+        const result = await client.request({
+            SERVICE: "invoice.get",
+            FILTER: cleanData({ INVOICE_ID: params.invoice_id, INVOICE_NUMBER: params.invoice_number }),
+            LIMIT: 1,
+        });
+        const invoices = result.RESPONSE.INVOICES;
+        const invoice = Array.isArray(invoices) ? invoices[0] : undefined;
+        if (!invoice) {
+            throw new Error(`Invoice not found: ${params.invoice_id ?? params.invoice_number}`);
+        }
+        const documentUrl = invoice.DOCUMENT_URL ? String(invoice.DOCUMENT_URL) : "";
+        if (!documentUrl) {
+            throw new Error(`Invoice ${invoice.INVOICE_ID} has no PDF (DOCUMENT_URL empty). Drafts must be completed first.`);
+        }
+        const url = new URL(documentUrl);
+        if (url.protocol !== "https:") {
+            throw new Error(`Refusing non-HTTPS document URL: ${documentUrl}`);
+        }
+        // Only send credentials to Fastbill itself
+        const headers = {};
+        if (url.hostname === "fastbill.com" || url.hostname.endsWith(".fastbill.com")) {
+            headers.Authorization = client.getAuthHeader();
+        }
+        const response = await fetch(url, { headers });
+        if (!response.ok) {
+            throw new Error(`PDF download failed: ${response.status} ${response.statusText}`);
+        }
+        const pdf = Buffer.from(await response.arrayBuffer());
+        if (pdf.subarray(0, 5).toString("latin1") !== "%PDF-") {
+            throw new Error(`Download is not a PDF (content-type: ${response.headers.get("content-type") ?? "unknown"})`);
+        }
+        const number = invoice.INVOICE_NUMBER ? String(invoice.INVOICE_NUMBER) : `ID_${invoice.INVOICE_ID}`;
+        const dir = resolve(params.target_dir ?? DEFAULT_PDF_DIR);
+        const filePath = join(dir, safeFilename(params.filename ?? `Rechnung_${number}`));
+        await mkdir(dir, { recursive: true });
+        await writeFile(filePath, pdf);
+        const text = [
+            `PDF gespeichert: ${filePath}`,
+            `Rechnung: ${number} (ID ${invoice.INVOICE_ID})`,
+            `Größe: ${(pdf.length / 1024).toFixed(1)} KB`,
+        ].join("\n");
+        return { content: [{ type: "text", text }] };
     });
 }
 //# sourceMappingURL=invoice.js.map
