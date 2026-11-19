@@ -71,12 +71,13 @@ export function registerExpenseTools(server: McpServer) {
     comment: z.string().optional().describe("Comment/notes"),
     sub_total: z.number().describe("Net amount (required)"),
     vat_total: z.number().optional().describe("VAT amount"),
+    currency_code: z.string().optional().describe("Currency (ISO 4217, e.g. EUR)"),
     items: z.array(ExpenseItemSchema).optional().describe("Expense line items with categories"),
   }, async (params) => {
     const client = getClient();
     const items = params.items?.map((i) => cleanData({ DESCRIPTION: i.description, QUANTITY: i.quantity, UNIT_PRICE: i.unit_price, VAT_PERCENT: i.vat_percent, CATEGORY: i.category, CATEGORY_ID: i.category_id }));
-    const data: Record<string, unknown> = cleanData({ INVOICE_DATE: params.invoice_date, SERVICE_PERIOD_START: params.service_period_start, SERVICE_PERIOD_END: params.service_period_end, DUE_DATE: params.due_date, PROJECT_ID: params.project_id, CUSTOMER_ID: params.customer_id, ORGANIZATION: params.organization, INVOICE_NUMBER: params.invoice_number, COMMENT: params.comment, SUB_TOTAL: params.sub_total, VAT_TOTAL: params.vat_total });
-    if (items) data.ITEMS = items;
+    const data: Record<string, unknown> = cleanData({ INVOICE_DATE: params.invoice_date, SERVICE_PERIOD_START: params.service_period_start, SERVICE_PERIOD_END: params.service_period_end, DUE_DATE: params.due_date, PROJECT_ID: params.project_id, CUSTOMER_ID: params.customer_id, ORGANIZATION: params.organization, INVOICE_NUMBER: params.invoice_number, COMMENT: params.comment, SUB_TOTAL: params.sub_total, VAT_TOTAL: params.vat_total, CURRENCY_CODE: params.currency_code });
+    if (items && items.length > 0) data.ITEMS = items;
     const result = await client.request({ SERVICE: "expense.create", DATA: data });
     return { content: [{ type: "text", text: JSON.stringify(result.RESPONSE, null, 2) }] };
   });

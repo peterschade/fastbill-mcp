@@ -27,8 +27,62 @@ export class FastbillClient {
       "Basic " + Buffer.from(`${email}:${apiKey}`).toString("base64");
   }
 
-  getAuthHeader(): string {
-    return this.authHeader;
+  /**
+   * Download a document (e.g. an invoice PDF) from a URL returned by the API.
+   * HTTPS only on every redirect hop; credentials are only sent to fastbill.com hosts.
+   * Fails on timeout, oversize responses and non-PDF content.
+   */
+  async downloadPdf(documentUrl: string): Promise<Buffer> {
+    const MAX_REDIRECTS = 5;
+    const MAX_BYTES = 25 * 1024 * 1024;
+    const signal = AbortSignal.timeout(30_000);
+
+    let url = new URL(documentUrl);
+    let response: Response | undefined;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      if (url.protocol !== "https:") {
+        throw new Error(`Refusing non-HTTPS document URL: ${url.href}`);
+      }
+      const isFastbill = url.hostname === "fastbill.com" || url.hostname.endsWith(".fastbill.com");
+      const headers: Record<string, string> = isFastbill ? { Authorization: this.authHeader } : {};
+      response = await fetch(url, { headers, redirect: "manual", signal });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        await response.body?.cancel();
+        if (!location) throw new Error(`Redirect without location (${response.status})`);
+        url = new URL(location, url);
+        continue;
+      }
+      break;
+    }
+    if (!response || (response.status >= 300 && response.status < 400)) {
+      throw new Error("PDF download failed: too many redirects");
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`PDF download failed: ${response.status} ${response.statusText}`);
+    }
+    const declared = Number(response.headers.get("content-length") ?? 0);
+    if (declared > MAX_BYTES) {
+      await response.body?.cancel();
+      throw new Error(`PDF too large (${declared} bytes)`);
+    }
+    if (!response.body) throw new Error("PDF download failed: empty response");
+
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+      total += chunk.length;
+      if (total > MAX_BYTES) throw new Error(`PDF too large (> ${MAX_BYTES} bytes)`);
+      chunks.push(Buffer.from(chunk));
+    }
+    const pdf = Buffer.concat(chunks);
+    if (pdf.subarray(0, 5).toString("latin1") !== "%PDF-") {
+      throw new Error(
+        `Download is not a PDF (content-type: ${response.headers.get("content-type") ?? "unknown"})`
+      );
+    }
+    return pdf;
   }
 
   async request(payload: FastbillRequest): Promise<FastbillResponse> {

@@ -57,6 +57,12 @@ const ESTIMATE_STATE_MAP: Record<string, string> = {
   d: "akzeptiert",
   e: "abgelehnt",
   f: "in Rechnung gestellt",
+  created: "erstellt",
+  sent: "gesendet",
+  negotiation: "Verhandlung",
+  accepted: "akzeptiert",
+  rejected: "abgelehnt",
+  invoiced: "in Rechnung gestellt",
 };
 
 const PAYMENT_TYPE_MAP: Record<string, string> = {

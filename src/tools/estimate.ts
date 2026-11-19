@@ -2,26 +2,17 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getClient, cleanData, todayISO, progressiveSearch } from "../client.js";
 import { formatEstimates, sortByDateDesc } from "../formatters.js";
-
-const EstimateItemSchema = z.object({
-  article_number: z.string().optional().describe("Article/product number"),
-  description: z.string().describe("Item description (required)"),
-  quantity: z.number().optional().describe("Quantity"),
-  unit: z.string().optional().describe("Unit (e.g. Stück, Stunde)"),
-  unit_price: z.number().describe("Unit price (required)"),
-  vat_percent: z.number().describe("VAT percentage (required)"),
-  is_gross: z.number().optional().describe("Price is gross (1) or net (0)"),
-  sort_order: z.number().optional().describe("Sort order"),
-});
+import { VAT_CASE_ENUM, LineItemSchema, mapLineItems, documentDiscountParams, assertItemsWhenReplacing } from "./shared.js";
 
 export function registerEstimateTools(server: McpServer) {
   server.tool(
     "estimate_get",
-    "Get estimates/quotes from Fastbill, sorted newest first. ALWAYS set start_date/end_date — without them the API returns random results. States: a=created, b=sent, c=negotiation, d=accepted, e=rejected, f=invoiced.",
+    "Get estimates/quotes from Fastbill, sorted newest first. ALWAYS set start_date/end_date — without them the API returns random results. States: created, sent, negotiation, accepted, rejected, invoiced (older responses use letters a-f).",
     {
       estimate_id: z.string().optional().describe("Filter by estimate ID"),
       estimate_number: z.string().optional().describe("Filter by estimate number"),
       customer_id: z.string().optional().describe("Filter by customer ID"),
+      is_gross: z.number().optional().describe("Filter by gross flag (1 = unit prices are gross, 0 = net)"),
       start_date: z.string().optional().describe("From date (YYYY-MM-DD). ALWAYS SET — otherwise random results!"),
       end_date: z.string().optional().describe("Until date (YYYY-MM-DD). ALWAYS SET — otherwise random results!"),
       limit: z.number().optional().describe("Max results (max 100)"),
@@ -40,13 +31,13 @@ export function registerEstimateTools(server: McpServer) {
       if (hasSpecificFilter) {
         const result = await client.request({
           SERVICE: "estimate.get",
-          FILTER: cleanData({ ESTIMATE_ID: params.estimate_id, ESTIMATE_NUMBER: params.estimate_number, CUSTOMER_ID: params.customer_id, START_DATE: startDate, END_DATE: endDate }),
+          FILTER: cleanData({ ESTIMATE_ID: params.estimate_id, ESTIMATE_NUMBER: params.estimate_number, CUSTOMER_ID: params.customer_id, IS_GROSS: params.is_gross, START_DATE: startDate, END_DATE: endDate }),
           LIMIT: params.limit ?? 100, OFFSET: params.offset,
         });
         response = result.RESPONSE;
       } else {
         const search = await progressiveSearch(client, "estimate.get",
-          cleanData({ CUSTOMER_ID: params.customer_id }),
+          cleanData({ CUSTOMER_ID: params.customer_id, IS_GROSS: params.is_gross }),
           "ESTIMATES", params.limit ?? 100, params.offset);
         response = search.response;
         startDate = search.startDate;
@@ -77,16 +68,44 @@ export function registerEstimateTools(server: McpServer) {
     due_date: z.string().optional().describe("Valid until date (YYYY-MM-DD)"),
     customer_costcenter_id: z.string().optional().describe("Cost center ID"),
     project_id: z.string().optional().describe("Project ID"),
-    vat_case: z.number().optional().describe("VAT case: 1=reverse charge, 0=normal"),
+    vat_case: VAT_CASE_ENUM.optional().describe("VAT case"),
     is_gross: z.number().optional().describe("Prices gross (1) or net (0)"),
-    items: z.array(EstimateItemSchema).describe("Line items (required)"),
+    ...documentDiscountParams,
+    items: z.array(LineItemSchema).min(1).describe("Line items (required)"),
   }, async (params) => {
     const client = getClient();
-    const items = params.items.map((i) => cleanData({ ARTICLE_NUMBER: i.article_number, DESCRIPTION: i.description, QUANTITY: i.quantity, UNIT: i.unit, UNIT_PRICE: i.unit_price, VAT_PERCENT: i.vat_percent, IS_GROSS: i.is_gross, SORT_ORDER: i.sort_order }));
     const result = await client.request({
       SERVICE: "estimate.create",
-      DATA: cleanData({ CUSTOMER_ID: params.customer_id, CONTACT_ID: params.contact_id, CURRENCY_CODE: params.currency_code, TEMPLATE_ID: params.template_id, TEMPLATE_HASH: params.template_hash, INTROTEXT: params.introtext, ESTIMATE_TITLE: params.estimate_title, ESTIMATE_DATE: params.estimate_date, DUE_DATE: params.due_date, CUSTOMER_COSTCENTER_ID: params.customer_costcenter_id, PROJECT_ID: params.project_id, VAT_CASE: params.vat_case, IS_GROSS: params.is_gross, ITEMS: items }),
+      DATA: cleanData({ CUSTOMER_ID: params.customer_id, CONTACT_ID: params.contact_id, CURRENCY_CODE: params.currency_code, TEMPLATE_ID: params.template_id, TEMPLATE_HASH: params.template_hash, INTROTEXT: params.introtext, ESTIMATE_TITLE: params.estimate_title, ESTIMATE_DATE: params.estimate_date, DUE_DATE: params.due_date, CUSTOMER_COSTCENTER_ID: params.customer_costcenter_id, PROJECT_ID: params.project_id, VAT_CASE: params.vat_case, IS_GROSS: params.is_gross, DISCOUNT_PERCENT: params.discount_percent, DISCOUNT_AMOUNT: params.discount_amount, ITEMS: mapLineItems(params.items) }),
     });
+    return { content: [{ type: "text", text: JSON.stringify(result.RESPONSE, null, 2) }] };
+  });
+
+  server.tool("estimate_update", "Update an existing estimate/quote in Fastbill: fields, status, validity date and/or line items. Only provided fields are changed.", {
+    estimate_id: z.string().describe("Estimate ID to update (required)"),
+    state: z.enum(["created", "sent", "negotiation", "accepted", "rejected", "invoiced"]).optional().describe("Estimate status"),
+    customer_id: z.string().optional().describe("Customer ID"),
+    contact_id: z.string().optional().describe("Contact ID"),
+    currency_code: z.string().optional().describe("Currency (e.g. EUR)"),
+    template_id: z.string().optional().describe("Template ID"),
+    template_hash: z.string().optional().describe("Template hash (permanent, preferred)"),
+    introtext: z.string().optional().describe("Introduction text"),
+    estimate_title: z.string().optional().describe("Estimate title"),
+    estimate_date: z.string().optional().describe("Estimate date (YYYY-MM-DD)"),
+    due_date: z.string().optional().describe("Valid until date (YYYY-MM-DD)"),
+    customer_costcenter_id: z.string().optional().describe("Cost center ID"),
+    project_id: z.string().optional().describe("Project ID"),
+    vat_case: VAT_CASE_ENUM.optional().describe("VAT case"),
+    is_gross: z.number().optional().describe("Prices gross (1) or net (0)"),
+    ...documentDiscountParams,
+    delete_existing_items: z.number().optional().describe("Delete all existing items before adding the given ones (0 or 1). With 1, items must not be empty."),
+    items: z.array(LineItemSchema).optional().describe("New/updated line items"),
+  }, async (params) => {
+    assertItemsWhenReplacing(params.delete_existing_items, params.items);
+    const client = getClient();
+    const data: Record<string, unknown> = cleanData({ ESTIMATE_ID: params.estimate_id, STATE: params.state, CUSTOMER_ID: params.customer_id, CONTACT_ID: params.contact_id, CURRENCY_CODE: params.currency_code, TEMPLATE_ID: params.template_id, TEMPLATE_HASH: params.template_hash, INTROTEXT: params.introtext, ESTIMATE_TITLE: params.estimate_title, ESTIMATE_DATE: params.estimate_date, DUE_DATE: params.due_date, CUSTOMER_COSTCENTER_ID: params.customer_costcenter_id, PROJECT_ID: params.project_id, VAT_CASE: params.vat_case, IS_GROSS: params.is_gross, DISCOUNT_PERCENT: params.discount_percent, DISCOUNT_AMOUNT: params.discount_amount, DELETE_EXISTING_ITEMS: params.delete_existing_items });
+    if (params.items && params.items.length > 0) data.ITEMS = mapLineItems(params.items);
+    const result = await client.request({ SERVICE: "estimate.update", DATA: data });
     return { content: [{ type: "text", text: JSON.stringify(result.RESPONSE, null, 2) }] };
   });
 

@@ -17,9 +17,9 @@ export function registerDocumentTools(server: McpServer) {
   });
 
   server.tool("document_create", "Create a document entry in Fastbill (metadata only).", {
-    type: z.string().optional().describe("Document type"),
-    title: z.string().optional().describe("Document title"),
-    date: z.string().optional().describe("Document date (YYYY-MM-DD)"),
+    type: z.enum(["contract", "letter", "company_documents", "account_statement", "documentation"]).describe("Document type: contract, letter, company_documents, account_statement, documentation (required)"),
+    title: z.string().describe("Document title (required)"),
+    date: z.string().describe("Document date (YYYY-MM-DD, required)"),
     note: z.string().optional().describe("Note/description"),
   }, async (params) => {
     const client = getClient();

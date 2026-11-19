@@ -17,7 +17,12 @@ export interface FastbillResponse {
 export declare class FastbillClient {
     private authHeader;
     constructor(email: string, apiKey: string);
-    getAuthHeader(): string;
+    /**
+     * Download a document (e.g. an invoice PDF) from a URL returned by the API.
+     * HTTPS only on every redirect hop; credentials are only sent to fastbill.com hosts.
+     * Fails on timeout, oversize responses and non-PDF content.
+     */
+    downloadPdf(documentUrl: string): Promise<Buffer>;
     request(payload: FastbillRequest): Promise<FastbillResponse>;
 }
 export declare function getClient(): FastbillClient;

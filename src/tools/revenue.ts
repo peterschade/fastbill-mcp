@@ -3,6 +3,14 @@ import { z } from "zod";
 import { getClient, cleanData, todayISO, progressiveSearch } from "../client.js";
 import { formatRevenues, sortByDateDesc } from "../formatters.js";
 
+const RevenueItemSchema = z.object({
+  description: z.string().describe("Item description"),
+  quantity: z.number().optional().describe("Quantity"),
+  unit_price: z.number().describe("Unit price"),
+  vat_percent: z.number().describe("VAT percentage"),
+  sort_order: z.number().optional().describe("Sort order"),
+});
+
 export function registerRevenueTools(server: McpServer) {
   server.tool("revenue_get", "Get revenues from Fastbill, sorted newest first. ALWAYS set start_date/end_date — without them the API returns random results.", {
     invoice_id: z.string().optional().describe("Filter by revenue ID"),
@@ -63,14 +71,19 @@ export function registerRevenueTools(server: McpServer) {
     invoice_date: z.string().describe("Invoice date (YYYY-MM-DD, required)"),
     due_date: z.string().optional().describe("Due date (YYYY-MM-DD)"),
     customer_id: z.string().describe("Customer ID (required)"),
+    project_id: z.string().optional().describe("Project ID"),
     invoice_number: z.string().optional().describe("External invoice number"),
     comment: z.string().optional().describe("Comment"),
     sub_total: z.number().describe("Net amount (required)"),
     vat_total: z.number().optional().describe("VAT amount"),
     currency_code: z.string().optional().describe("Currency (e.g. EUR)"),
+    items: z.array(RevenueItemSchema).optional().describe("Revenue line items (item fields are not documented by Fastbill; modeled after invoice items)"),
   }, async (params) => {
     const client = getClient();
-    const result = await client.request({ SERVICE: "revenue.create", DATA: cleanData({ INVOICE_DATE: params.invoice_date, DUE_DATE: params.due_date, CUSTOMER_ID: params.customer_id, INVOICE_NUMBER: params.invoice_number, COMMENT: params.comment, SUB_TOTAL: params.sub_total, VAT_TOTAL: params.vat_total, CURRENCY_CODE: params.currency_code }) });
+    const items = params.items?.map((i) => cleanData({ DESCRIPTION: i.description, QUANTITY: i.quantity, UNIT_PRICE: i.unit_price, VAT_PERCENT: i.vat_percent, SORT_ORDER: i.sort_order }));
+    const data: Record<string, unknown> = cleanData({ INVOICE_DATE: params.invoice_date, DUE_DATE: params.due_date, CUSTOMER_ID: params.customer_id, PROJECT_ID: params.project_id, INVOICE_NUMBER: params.invoice_number, COMMENT: params.comment, SUB_TOTAL: params.sub_total, VAT_TOTAL: params.vat_total, CURRENCY_CODE: params.currency_code });
+    if (items && items.length > 0) data.ITEMS = items;
+    const result = await client.request({ SERVICE: "revenue.create", DATA: data });
     return { content: [{ type: "text", text: JSON.stringify(result.RESPONSE, null, 2) }] };
   });
 
