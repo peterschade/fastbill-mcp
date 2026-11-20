@@ -1,10 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getClient, cleanData, todayISO, progressiveSearch } from "../client.js";
-import { formatTimeEntries, sortByDateDesc } from "../formatters.js";
+import { formatTimeEntries, sortByDateDesc, coverageNote } from "../formatters.js";
 
 export function registerTimeTools(server: McpServer) {
-  server.tool("time_get", "Get time tracking entries from Fastbill, sorted newest first. ALWAYS set start_date/end_date — without them the API returns random results.", {
+  server.tool("time_get", "Get time tracking entries from Fastbill. FastBill cannot sort: it returns the OLDEST entries of the range first, and limit cuts off the newest. The tool only re-sorts the returned page newest first. For the latest entries narrow the date range instead of using limit. ALWAYS set start_date/end_date — without them the API returns random results.", {
     time_id: z.string().optional().describe("Filter by time entry ID"),
     customer_id: z.string().optional().describe("Filter by customer ID"),
     project_id: z.string().optional().describe("Filter by project ID"),
@@ -12,7 +12,7 @@ export function registerTimeTools(server: McpServer) {
     start_date: z.string().optional().describe("From date (YYYY-MM-DD). ALWAYS SET!"),
     end_date: z.string().optional().describe("Until date (YYYY-MM-DD). ALWAYS SET!"),
     date: z.string().optional().describe("Specific date (YYYY-MM-DD)"),
-    limit: z.number().optional().describe("Max results (max 100)"),
+    limit: z.number().optional().describe("Max results (max 100). Cuts off the NEWEST entries, because FastBill returns oldest first — prefer a narrower date range"),
     offset: z.number().optional().describe("Pagination offset"),
     detailed: z.boolean().optional().describe("Return full raw JSON (default false)"),
   }, async (params) => {
@@ -40,7 +40,8 @@ export function registerTimeTools(server: McpServer) {
       response.TIMES = sortByDateDesc(response.TIMES as Record<string, unknown>[], "DATE");
     }
 
-    const dateInfo = startDate && endDate ? `\nZeitraum: ${startDate} bis ${endDate}` : "";
+    const dateInfo = (startDate && endDate ? `\nAbgefragt: ${startDate} bis ${endDate}` : "")
+      + coverageNote(response.TIMES, "DATE", params.limit ?? 100, params.offset);
     const text = params.detailed
       ? JSON.stringify(response, null, 2)
       : `Heute: ${today}\n` + formatTimeEntries(response) + dateInfo;

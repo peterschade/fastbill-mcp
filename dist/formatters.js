@@ -13,9 +13,39 @@ export function sortByDateDesc(items, dateField) {
         return db.localeCompare(da);
     });
 }
+/**
+ * Explain which part of the requested range the returned page actually covers.
+ * FastBill has no sort parameter and returns the oldest entries first, so a full page
+ * means newer entries were left out.
+ */
+export function coverageNote(rows, dateField, limit, offset) {
+    if (!Array.isArray(rows) || rows.length === 0)
+        return "";
+    const dates = rows
+        .map((r) => String(r[dateField] ?? "").slice(0, 10))
+        .filter((d) => d && !d.startsWith("0000-00-00"))
+        .sort();
+    const from = dates[0];
+    const to = dates[dates.length - 1];
+    let note = `\nEnthalten: ${rows.length} Einträge${from ? ` vom ${from} bis ${to}` : ""} (FastBill liefert älteste zuerst, Anzeige neueste zuerst)`;
+    if (rows.length >= limit) {
+        note += `\n⚠ Limit erreicht – vermutlich gibt es weitere, neuere Einträge${to ? ` nach ${to}` : ""}.`
+            + ` Zeitraum eingrenzen${to ? ` (z.B. ab ${to})` : ""} oder offset=${(offset ?? 0) + rows.length} nutzen.`;
+    }
+    return note;
+}
+/** Strip HTML tags and common entities so shortened texts don't end in half a tag. */
+function plainText(html) {
+    return html
+        .replace(/<br\s*\/?>/gi, " ")
+        .replace(/<[^>]*>/g, "")
+        .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"')
+        .replace(/\s+/g, " ")
+        .trim();
+}
 function val(obj, key) {
     const v = obj[key];
-    if (v === undefined || v === null || v === "" || v === "0000-00-00")
+    if (v === undefined || v === null || v === "" || String(v).startsWith("0000-00-00"))
         return "";
     return String(v);
 }
@@ -74,7 +104,7 @@ function formatItemsList(items) {
         .map((item) => {
         const qty = Number(item.QUANTITY || 1);
         const price = Number(item.UNIT_PRICE || 0);
-        const desc = val(item, "DESCRIPTION").substring(0, 60);
+        const desc = plainText(val(item, "DESCRIPTION")).substring(0, 60);
         const unit = val(item, "UNIT");
         return `  - ${desc} (${qty}${unit ? " " + unit : ""} × ${price.toLocaleString("de-DE", { minimumFractionDigits: 2 })}€)`;
     })

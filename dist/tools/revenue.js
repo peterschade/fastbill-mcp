@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { getClient, cleanData, todayISO, progressiveSearch } from "../client.js";
-import { formatRevenues, sortByDateDesc } from "../formatters.js";
+import { formatRevenues, sortByDateDesc, coverageNote } from "../formatters.js";
 const RevenueItemSchema = z.object({
     description: z.string().describe("Item description"),
     quantity: z.number().optional().describe("Quantity"),
@@ -9,7 +9,7 @@ const RevenueItemSchema = z.object({
     sort_order: z.number().optional().describe("Sort order"),
 });
 export function registerRevenueTools(server) {
-    server.tool("revenue_get", "Get revenues from Fastbill, sorted newest first. ALWAYS set start_date/end_date — without them the API returns random results.", {
+    server.tool("revenue_get", "Get revenues from Fastbill. FastBill cannot sort: it returns the OLDEST entries of the range first, and limit cuts off the newest. The tool only re-sorts the returned page newest first. For the latest entries narrow the date range instead of using limit. ALWAYS set start_date/end_date — without them the API returns random results.", {
         invoice_id: z.string().optional().describe("Filter by revenue ID"),
         invoice_number: z.string().optional().describe("Filter by invoice number"),
         invoice_title: z.string().optional().describe("Filter by title"),
@@ -23,7 +23,7 @@ export function registerRevenueTools(server) {
         end_date: z.string().optional().describe("Date until (YYYY-MM-DD). ALWAYS SET!"),
         start_lastupdate: z.string().optional().describe("Last update from (YYYY-MM-DD)"),
         end_lastupdate: z.string().optional().describe("Last update until (YYYY-MM-DD)"),
-        limit: z.number().optional().describe("Max results (max 100)"),
+        limit: z.number().optional().describe("Max results (max 100). Cuts off the NEWEST entries, because FastBill returns oldest first — prefer a narrower date range"),
         offset: z.number().optional().describe("Pagination offset"),
         detailed: z.boolean().optional().describe("Return full raw JSON (default false)"),
     }, async (params) => {
@@ -52,7 +52,8 @@ export function registerRevenueTools(server) {
         if (Array.isArray(response.INVOICES)) {
             response.INVOICES = sortByDateDesc(response.INVOICES, "INVOICE_DATE");
         }
-        const dateInfo = startDate && endDate ? `\nZeitraum: ${startDate} bis ${endDate}` : "";
+        const dateInfo = (startDate && endDate ? `\nAbgefragt: ${startDate} bis ${endDate}` : "")
+            + coverageNote(response.INVOICES, "INVOICE_DATE", params.limit ?? 100, params.offset);
         const text = params.detailed
             ? JSON.stringify(response, null, 2)
             : `Heute: ${today}\n` + formatRevenues(response) + dateInfo;

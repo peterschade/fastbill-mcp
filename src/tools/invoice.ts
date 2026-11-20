@@ -4,7 +4,7 @@ import { lstat, mkdir, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, parse } from "node:path";
 import { getClient, cleanData, todayISO, progressiveSearch } from "../client.js";
-import { formatInvoices, sortByDateDesc } from "../formatters.js";
+import { formatInvoices, sortByDateDesc, coverageNote } from "../formatters.js";
 import { VAT_CASE_ENUM, SUBTYPE_ENUM, LineItemSchema, mapLineItems, documentDiscountParams, assertItemsWhenReplacing } from "./shared.js";
 
 const subtypeParams = {
@@ -80,7 +80,7 @@ async function writeNewFile(dir: string, filename: string, data: Buffer, mode?: 
 export function registerInvoiceTools(server: McpServer) {
   server.tool(
     "invoice_get",
-    "Get invoices from Fastbill, sorted by date (newest first). IMPORTANT: Always set start_date and end_date! Without date filters the API returns random invoices from all time. For 'latest invoices' use the current month or last 3 months as range. For 'all invoices' use a full year range. Max 100 per request — use offset for pagination.",
+    "Get invoices from Fastbill. FastBill cannot sort: it returns the OLDEST entries of the range first, and limit cuts off the newest. The tool only re-sorts the returned page newest first. For the latest entries narrow the date range instead of using limit. IMPORTANT: Always set start_date and end_date! Without date filters the API returns random invoices from all time. For 'latest invoices' use the current month or last 3 months as range. For 'all invoices' use a full year range. Max 100 per request — use offset for pagination.",
     {
       invoice_id: z.string().optional().describe("Filter by invoice ID"),
       invoice_number: z.string().optional().describe("Filter by invoice number"),
@@ -104,7 +104,7 @@ export function registerInvoiceTools(server: McpServer) {
       end_date: z.string().optional().describe("Invoice date until (YYYY-MM-DD). ALWAYS SET THIS — otherwise random results!"),
       start_lastupdate: z.string().optional().describe("Last update from (YYYY-MM-DD)"),
       end_lastupdate: z.string().optional().describe("Last update until (YYYY-MM-DD)"),
-      limit: z.number().optional().describe("Max results per request (max 100)"),
+      limit: z.number().optional().describe("Max results (max 100). Cuts off the NEWEST entries, because FastBill returns oldest first — prefer a narrower date range"),
       offset: z.number().optional().describe("Pagination offset for fetching more results beyond 100"),
       detailed: z.boolean().optional().describe("Return full raw JSON instead of compact summary (default false)"),
     },
@@ -150,7 +150,8 @@ export function registerInvoiceTools(server: McpServer) {
         response.INVOICES = sortByDateDesc(response.INVOICES as Record<string, unknown>[], "INVOICE_DATE");
       }
 
-      const dateInfo = startDate && endDate ? `\nZeitraum: ${startDate} bis ${endDate}` : "";
+      const dateInfo = (startDate && endDate ? `\nAbgefragt: ${startDate} bis ${endDate}` : "")
+      + coverageNote(response.INVOICES, "INVOICE_DATE", params.limit ?? 100, params.offset);
       const text = params.detailed
         ? JSON.stringify(response, null, 2)
         : `Heute: ${today}\n` + formatInvoices(response) + dateInfo;

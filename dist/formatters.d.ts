@@ -8,6 +8,12 @@ type R = Record<string, unknown>;
  * Sort an array of records by a date field, newest first.
  */
 export declare function sortByDateDesc(items: R[], dateField: string): R[];
+/**
+ * Explain which part of the requested range the returned page actually covers.
+ * FastBill has no sort parameter and returns the oldest entries first, so a full page
+ * means newer entries were left out.
+ */
+export declare function coverageNote(rows: unknown, dateField: string, limit: number, offset?: number): string;
 export declare function formatInvoices(response: R): string;
 export declare function formatCustomers(response: R): string;
 export declare function formatContacts(response: R): string;

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { getClient, cleanData, todayISO, progressiveSearch } from "../client.js";
-import { formatExpenses, sortByDateDesc } from "../formatters.js";
+import { formatExpenses, sortByDateDesc, coverageNote } from "../formatters.js";
 const ExpenseItemSchema = z.object({
     description: z.string().describe("Item description"),
     quantity: z.number().optional().describe("Quantity"),
@@ -10,14 +10,14 @@ const ExpenseItemSchema = z.object({
     category_id: z.string().optional().describe("Expense category ID"),
 });
 export function registerExpenseTools(server) {
-    server.tool("expense_get", "Get expenses from Fastbill, sorted newest first. ALWAYS set start_date/end_date — without them the API returns random results.", {
+    server.tool("expense_get", "Get expenses from Fastbill. FastBill cannot sort: it returns the OLDEST entries of the range first, and limit cuts off the newest. The tool only re-sorts the returned page newest first. For the latest entries narrow the date range instead of using limit. ALWAYS set start_date/end_date — without them the API returns random results.", {
         invoice_id: z.string().optional().describe("Filter by expense ID"),
         invoice_number: z.string().optional().describe("Filter by invoice number"),
         start_paid_date: z.string().optional().describe("Paid from (YYYY-MM-DD)"),
         end_paid_date: z.string().optional().describe("Paid until (YYYY-MM-DD)"),
         start_date: z.string().optional().describe("Date from (YYYY-MM-DD). ALWAYS SET!"),
         end_date: z.string().optional().describe("Date until (YYYY-MM-DD). ALWAYS SET!"),
-        limit: z.number().optional().describe("Max results (max 100)"),
+        limit: z.number().optional().describe("Max results (max 100). Cuts off the NEWEST entries, because FastBill returns oldest first — prefer a narrower date range"),
         offset: z.number().optional().describe("Pagination offset"),
         detailed: z.boolean().optional().describe("Return full raw JSON (default false)"),
     }, async (params) => {
@@ -45,7 +45,8 @@ export function registerExpenseTools(server) {
         if (Array.isArray(response.EXPENSES)) {
             response.EXPENSES = sortByDateDesc(response.EXPENSES, "INVOICE_DATE");
         }
-        const dateInfo = startDate && endDate ? `\nZeitraum: ${startDate} bis ${endDate}` : "";
+        const dateInfo = (startDate && endDate ? `\nAbgefragt: ${startDate} bis ${endDate}` : "")
+            + coverageNote(response.EXPENSES, "INVOICE_DATE", params.limit ?? 100, params.offset);
         const text = params.detailed
             ? JSON.stringify(response, null, 2)
             : `Heute: ${today}\n` + formatExpenses(response) + dateInfo;

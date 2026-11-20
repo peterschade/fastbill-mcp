@@ -1,16 +1,16 @@
 import { z } from "zod";
 import { getClient, cleanData, todayISO, progressiveSearch } from "../client.js";
-import { formatEstimates, sortByDateDesc } from "../formatters.js";
+import { formatEstimates, sortByDateDesc, coverageNote } from "../formatters.js";
 import { VAT_CASE_ENUM, LineItemSchema, mapLineItems, documentDiscountParams, assertItemsWhenReplacing } from "./shared.js";
 export function registerEstimateTools(server) {
-    server.tool("estimate_get", "Get estimates/quotes from Fastbill, sorted newest first. ALWAYS set start_date/end_date — without them the API returns random results. States: created, sent, negotiation, accepted, rejected, invoiced (older responses use letters a-f).", {
+    server.tool("estimate_get", "Get estimates/quotes from Fastbill. FastBill cannot sort: it returns the OLDEST entries of the range first, and limit cuts off the newest. The tool only re-sorts the returned page newest first. For the latest entries narrow the date range instead of using limit. ALWAYS set start_date/end_date — without them the API returns random results. States: created, sent, negotiation, accepted, rejected, invoiced (older responses use letters a-f).", {
         estimate_id: z.string().optional().describe("Filter by estimate ID"),
         estimate_number: z.string().optional().describe("Filter by estimate number"),
         customer_id: z.string().optional().describe("Filter by customer ID"),
         is_gross: z.number().optional().describe("Filter by gross flag (1 = unit prices are gross, 0 = net)"),
         start_date: z.string().optional().describe("From date (YYYY-MM-DD). ALWAYS SET — otherwise random results!"),
         end_date: z.string().optional().describe("Until date (YYYY-MM-DD). ALWAYS SET — otherwise random results!"),
-        limit: z.number().optional().describe("Max results (max 100)"),
+        limit: z.number().optional().describe("Max results (max 100). Cuts off the NEWEST entries, because FastBill returns oldest first — prefer a narrower date range"),
         offset: z.number().optional().describe("Pagination offset"),
         detailed: z.boolean().optional().describe("Return full raw JSON (default false)"),
     }, async (params) => {
@@ -37,7 +37,8 @@ export function registerEstimateTools(server) {
         if (Array.isArray(response.ESTIMATES)) {
             response.ESTIMATES = sortByDateDesc(response.ESTIMATES, "ESTIMATE_DATE");
         }
-        const dateInfo = startDate && endDate ? `\nZeitraum: ${startDate} bis ${endDate}` : "";
+        const dateInfo = (startDate && endDate ? `\nAbgefragt: ${startDate} bis ${endDate}` : "")
+            + coverageNote(response.ESTIMATES, "ESTIMATE_DATE", params.limit ?? 100, params.offset);
         const text = params.detailed
             ? JSON.stringify(response, null, 2)
             : `Heute: ${today}\n` + formatEstimates(response) + dateInfo;
